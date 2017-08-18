@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/logger"
 	client "github.com/docker/docker/daemon/logger/omslogs/omsclient"
+	"github.com/sirupsen/logrus"
 )
 
 const (

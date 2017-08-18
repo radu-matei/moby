@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/Microsoft/hcsshim"
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/container"
@@ -28,6 +27,7 @@ import (
 	"github.com/docker/libnetwork/netlabel"
 	"github.com/docker/libnetwork/options"
 	blkiodev "github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
 )
 
@@ -231,7 +231,8 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 
 // reloadPlatform updates configuration with platform specific options
 // and updates the passed attributes
-func (daemon *Daemon) reloadPlatform(config *config.Config, attributes map[string]string) {
+func (daemon *Daemon) reloadPlatform(config *config.Config, attributes map[string]string) error {
+	return nil
 }
 
 // verifyDaemonSettings performs validation of daemon config struct
@@ -519,14 +520,14 @@ func driverOptions(config *config.Config) []nwconfig.Option {
 
 func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	if !c.IsRunning() {
-		return nil, errNotRunning{c.ID}
+		return nil, errNotRunning(c.ID)
 	}
 
 	// Obtain the stats from HCS via libcontainerd
 	stats, err := daemon.containerd.Stats(c.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "container not found") {
-			return nil, errNotFound{c.ID}
+			return nil, containerNotFound(c.ID)
 		}
 		return nil, err
 	}

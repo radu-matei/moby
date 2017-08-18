@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/blkiodev"
 	pblkiodev "github.com/docker/docker/api/types/blkiodev"
@@ -44,6 +43,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -276,6 +276,15 @@ func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConf
 			hostConfig.ShmSize = int64(daemon.configStore.ShmSize)
 		}
 	}
+	// Set default IPC mode, if unset for container
+	if hostConfig.IpcMode.IsEmpty() {
+		m := config.DefaultIpcMode
+		if daemon.configStore != nil {
+			m = daemon.configStore.IpcMode
+		}
+		hostConfig.IpcMode = containertypes.IpcMode(m)
+	}
+
 	var err error
 	opts, err := daemon.generateSecurityOpt(hostConfig)
 	if err != nil {
@@ -461,6 +470,7 @@ func verifyContainerResources(resources *containertypes.Resources, sysInfo *sysi
 		warnings = append(warnings, "Your kernel does not support BPS Block I/O write limit or the cgroup is not mounted. Block I/O BPS write limit discarded.")
 		logrus.Warn("Your kernel does not support BPS Block I/O write limit or the cgroup is not mounted. Block I/O BPS write limit discarded.")
 		resources.BlkioDeviceWriteBps = []*pblkiodev.ThrottleDevice{}
+
 	}
 	if len(resources.BlkioDeviceReadIOps) > 0 && !sysInfo.BlkioReadIOpsDevice {
 		warnings = append(warnings, "Your kernel does not support IOPS Block read limit or the cgroup is not mounted. Block I/O IOPS read limit discarded.")
@@ -547,7 +557,7 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 	// check for various conflicting options with user namespaces
 	if daemon.configStore.RemappedRoot != "" && hostConfig.UsernsMode.IsPrivate() {
 		if hostConfig.Privileged {
-			return warnings, fmt.Errorf("Privileged mode is incompatible with user namespaces")
+			return warnings, fmt.Errorf("Privileged mode is incompatible with user namespaces.  You must run the container in the host namespace when running privileged mode.")
 		}
 		if hostConfig.NetworkMode.IsHost() && !hostConfig.UsernsMode.IsHost() {
 			return warnings, fmt.Errorf("Cannot share the host's network namespace when user namespaces are enabled")
@@ -581,7 +591,11 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 
 // reloadPlatform updates configuration with platform specific options
 // and updates the passed attributes
-func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]string) {
+func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]string) error {
+	if err := conf.ValidatePlatformConfig(); err != nil {
+		return err
+	}
+
 	if conf.IsValueSet("runtimes") {
 		daemon.configStore.Runtimes = conf.Runtimes
 		// Always set the default one
@@ -596,6 +610,10 @@ func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]
 		daemon.configStore.ShmSize = conf.ShmSize
 	}
 
+	if conf.IpcMode != "" {
+		daemon.configStore.IpcMode = conf.IpcMode
+	}
+
 	// Update attributes
 	var runtimeList bytes.Buffer
 	for name, rt := range daemon.configStore.Runtimes {
@@ -608,6 +626,9 @@ func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]
 	attributes["runtimes"] = runtimeList.String()
 	attributes["default-runtime"] = daemon.configStore.DefaultRuntime
 	attributes["default-shm-size"] = fmt.Sprintf("%d", daemon.configStore.ShmSize)
+	attributes["default-ipc-mode"] = daemon.configStore.IpcMode
+
+	return nil
 }
 
 // verifyDaemonSettings performs validation of daemon config struct
@@ -1124,13 +1145,13 @@ func (daemon *Daemon) registerLinks(container *container.Container, hostConfig *
 		}
 		child, err := daemon.GetContainer(name)
 		if err != nil {
-			return fmt.Errorf("Could not get container for %s", name)
+			return errors.Wrapf(err, "could not get container for %s", name)
 		}
 		for child.HostConfig.NetworkMode.IsContainer() {
 			parts := strings.SplitN(string(child.HostConfig.NetworkMode), ":", 2)
 			child, err = daemon.GetContainer(parts[1])
 			if err != nil {
-				return fmt.Errorf("Could not get container for %s", parts[1])
+				return errors.Wrapf(err, "Could not get container for %s", parts[1])
 			}
 		}
 		if child.HostConfig.NetworkMode.IsHost() {
@@ -1161,12 +1182,12 @@ func (daemon *Daemon) conditionalUnmountOnCleanup(container *container.Container
 
 func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	if !c.IsRunning() {
-		return nil, errNotRunning{c.ID}
+		return nil, errNotRunning(c.ID)
 	}
 	stats, err := daemon.containerd.Stats(c.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "container not found") {
-			return nil, errNotFound{c.ID}
+			return nil, containerNotFound(c.ID)
 		}
 		return nil, err
 	}

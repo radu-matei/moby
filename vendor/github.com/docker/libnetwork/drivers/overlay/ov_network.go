@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/libnetwork/datastore"
 	"github.com/docker/libnetwork/driverapi"
@@ -24,6 +23,7 @@ import (
 	"github.com/docker/libnetwork/osl"
 	"github.com/docker/libnetwork/resolvconf"
 	"github.com/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"github.com/vishvananda/netns"
@@ -683,10 +683,12 @@ func (n *network) initSandbox(restore bool) error {
 		return fmt.Errorf("could not get network sandbox (oper %t): %v", restore, err)
 	}
 
+	// this is needed to let the peerAdd configure the sandbox
 	n.setSandbox(sbox)
 
 	if !restore {
-		n.driver.peerDbUpdateSandbox(n.id)
+		// Initialize the sandbox with all the peers previously received from networkdb
+		n.driver.initSandboxPeerDB(n.id)
 	}
 
 	var nlSock *nl.NetlinkSocket
@@ -765,10 +767,7 @@ func (n *network) watchMiss(nlSock *nl.NetlinkSocket) {
 					logrus.Errorf("could not resolve peer %q: %v", ip, err)
 					continue
 				}
-
-				if err := n.driver.peerAdd(n.id, "dummy", ip, IPmask, mac, vtep, true, l2Miss, l3Miss); err != nil {
-					logrus.Errorf("could not add neighbor entry for missed peer %q: %v", ip, err)
-				}
+				n.driver.peerAdd(n.id, "dummy", ip, IPmask, mac, vtep, true, l2Miss, l3Miss, false)
 			} else {
 				// If the gc_thresh values are lower kernel might knock off the neighor entries.
 				// When we get a L3 miss check if its a valid peer and reprogram the neighbor

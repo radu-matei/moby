@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/strslice"
@@ -29,6 +28,7 @@ import (
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/go-connections/nat"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // ENV foo bar
@@ -784,7 +784,7 @@ func stopSignal(req dispatchRequest) error {
 	sig := req.args[0]
 	_, err := signal.ParseSignal(sig)
 	if err != nil {
-		return err
+		return validationError{err}
 	}
 
 	req.state.runConfig.StopSignal = sig
