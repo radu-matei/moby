@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-//OmsLogClient interface
 type OmsLogClient interface {
 	PostData(*[]byte, string) error
 }
